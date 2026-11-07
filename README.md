@@ -19,7 +19,7 @@
 
 1. `python -m venv .venv` ثم تثبيت: `faster-whisper piper-tts sounddevice numpy text2tashkeel num2words pillow pystray arabic-reshaper python-bidi fonttools`.
 2. نماذج Piper في `models/piper/` (ar_JO-kareem-medium)، وخط Cairo في `fonts/` (رخصة OFL مرفقة).
-3. خادم سلمى في مجلد شقيق `../SilmaTTS` (بيئة torch منفصلة، `server.py`)؛ بدونه تعمل الأداة بكريم.
+3. خادم سلمى في مجلد شقيق `../SilmaTTS` (بيئة torch منفصلة مع `silma-tts`)؛ نسخة الخادم المعتمدة في `silma/server.py` تُنسخ إليه. يضبط الخادم مدة الصوت بعدد الحروف الحقيقية لا المحارف (الإيقاع `SILMA_PACE=0.85`، هامش `SILMA_MARGIN=4`)، ولا يقطع الجملة الطويلة (`SILMA_CHUNK=260`)، وبخطوات `SILMA_NFE=32`. بدونه تعمل الأداة بكريم.
 4. LM Studio يعمل على المنفذ الافتراضي ونموذج `qwen/qwen3-8b` محمّل للمحادثة.
 5. `start.cmd` يشغّل الأداة بلا نافذة طرفية.
 
