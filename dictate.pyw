@@ -397,6 +397,14 @@ PUNCT_REPEAT = re.compile(r"([.،؟])(?:\s*[.،؟!])+")
 PAUSAL_ALL = False                                                                            # True: تسكين أواخر كل الكلمات (يخفي أخطاء الإعراب)
 
 
+LETTERS = re.compile(r"[ء-ي]")
+
+
+def dense_tashkeel(text):
+    """صحيح إن كان النص مشكَّلًا تشكيلًا شبه كامل (حركة لكل حرفين على الأقل)؛ التشكيل الجزئي يُترك للمشكّل."""
+    return len(HARAKAT.findall(text)) >= 0.5 * max(1, len(LETTERS.findall(text)))
+
+
 def spoken_punct(text):
     """ترقيم صالح للنطق: نماذج النطق تتأثر بالعلامات الغريبة (نجوم، أقواس، شرطات، نقاط متتابعة) فتتلعثم أو تصمت؛
     تُبقى فقط النقطة والفاصلة وعلامة الاستفهام العربيتان، وتُحوَّل البقية إليها أو تُحذف."""
@@ -461,7 +469,10 @@ def speech_text(text, vocalizer):
         text = spoken_punct(text)
         if not vocalizer:
             return text
-        spoken = correct(vocalizer.diacritize(text))
+        if dense_tashkeel(text):                                 # نص مشكَّل أصلًا (say.txt أو جواب مشكَّل): المشكّل يعيد تشكيله فيُفسد إعرابه
+            spoken = text
+        else:
+            spoken = correct(vocalizer.diacritize(text))
         return shadda_first(pausal_all(spoken) if PAUSAL_ALL else pausal(spoken))
     except Exception:
         logging.exception("تجهيز نص النطق")
