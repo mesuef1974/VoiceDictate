@@ -91,10 +91,14 @@ COMMANDS = (
     ("exclaim", ("type", "!"), ("علامة تعجب", "exclamation")),
 )
 FUZZY_MAX_WORDS, FUZZY_MIN_LEN = 3, 4
-CHAT_URL, CHAT_MODEL, CHAT_TURNS, CHAT_GAP, CHAT_TIMEOUT = "http://127.0.0.1:1234/v1/chat/completions", "qwen/qwen3-8b", 12, 1.3, 120
-CHAT_SYSTEM = ("اسمك سلمى، مساعدة صوتية محلية تحاور المالك بالعربية الفصحى؛ إن سُئلت عن اسمك فأنت سلمى. أجيبي بجمل قصيرة واضحة تُنطق بصوت، من جملة إلى أربع، "
+CHAT_URL, CHAT_MODEL, CHAT_TURNS, CHAT_GAP, CHAT_TIMEOUT = "http://127.0.0.1:1234/v1/chat/completions", "qwen/qwen3-8b", 12, 0.8, 120   # CHAT_GAP من 1.3 إلى 0.8 (المالك 7/11: تأخير الصوت)
+CHAT_SYSTEM = ("اسمك سلمى، مساعدة صوتية محلية تحاور المالك بالعربية الفصحى؛ إن سُئلت عن اسمك فأنت سلمى. "
+               "المالك رجل: خاطبيه دائمًا بصيغة المذكر (أنتَ، تريدُ، هل تحبُّ)، ولا تخاطبيه بالمؤنث أبدًا (لا تريدين ولا أنتِ). "
+               "اكتبي فصحى سليمة النحو: طابقي الفعل والصفة مع ما يعودان عليه في التذكير والتأنيث والعدد، ولا تكتبي حرفًا لاتينيًا ولا كلمة أجنبية. "
+               "ابدئي ردك بجملة أولى قصيرة من ثلاث كلمات إلى ست تنتهي بنقطة، ثم أكملي. الرد كله من جملة إلى أربع تُنطق بصوت، "
                "نثرًا متصلًا في فقرة واحدة كما يتكلم الناس. ممنوع منعًا باتًا: القوائم، والنقاط، والترقيم (1، 2، -، •)، والعناوين، والرموز، والنجوم، "
                "والأسطر المنفصلة؛ اربطي الأفكار بحروف العطف. الأرقام غربية 0-9. إن كان السؤال عصفًا ذهنيًا فاطرحي فكرة واحدة ثم سؤالًا يدفع التفكير.")
+CHAT_TEMPERATURE = 0.3   # كانت 0.6؛ أخفض كي يقل شرود Qwen النحوي والحروف اللاتينية (المالك 7/11)
 LIST_MARK = re.compile(r"(?m)^[ \t]*(?:[-•*–—●▪►]+|\(?\d{1,2}[.)\-:]?|[أ-ي][.)]|#+)[ \t]+")  # علامات القوائم والترقيم والعناوين في أول السطر (ورقم عارٍ كما يفعل Qwen)
 MARK_ONLY = re.compile(r"[\s\d.)(\-•*–—●▪►:#]*")
 LINE_BREAKS = re.compile(r"[ \t]*\n+[ \t]*")
@@ -1294,7 +1298,7 @@ class App:
         self.write(BOT_LABEL)
         try:
             messages = [{"role": "system", "content": CHAT_SYSTEM}] + self.history[-CHAT_TURNS * 2:] + [{"role": "user", "content": question + " /no_think"}]
-            body = json.dumps({"model": CHAT_MODEL, "messages": messages, "stream": True, "temperature": 0.6, "max_tokens": 400}).encode("utf-8")
+            body = json.dumps({"model": CHAT_MODEL, "messages": messages, "stream": True, "temperature": CHAT_TEMPERATURE, "max_tokens": 400}).encode("utf-8")
             request = urllib.request.Request(CHAT_URL, data=body, headers={"Content-Type": "application/json"})
             with urllib.request.urlopen(request, timeout=CHAT_TIMEOUT) as response:
                 for raw in response:
