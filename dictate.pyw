@@ -374,7 +374,7 @@ def load_lexicon():
 
 
 def correct_word(word):
-    """كلمة مشكّلة من المشكّل: إن كان جذعها (بعد نزع السابقة) في المعجم استُبدلت حركاته وبقيت حركة حرفه الأخير (الإعراب) كما قدّرها المشكّل."""
+    """كلمة مشكّلة من المشكّل: إن كان جذعها (بعد نزع السابقة) في المعجم استُبدلت حركاته؛ وحركة حرفه الأخير من المعجم إن كتبها، وإلا بقي إعراب المشكّل."""
     bare = ALEFS.sub("ا", HARAKAT.sub("", word))
     for prefix in ("",) + PREFIXES:
         if bare.startswith(prefix) and bare[len(prefix):] in _lexicon:
@@ -393,7 +393,7 @@ def correct_word(word):
                 fixed_body, fixed_tail = fixed[:fixed_letters[-1] + 1], fixed[fixed_letters[-1] + 1:]
             if ALEFS.sub("ا", HARAKAT.sub("", fixed_body)) != stem_bare:                                    # المعجم يغيّر الحروف (ألصق/الصق): خذه كله
                 return word[:stem_start] + fixed
-            if "\u0652" in fixed_tail or not tail:                                           # المعجم يسكّن (أمر) أو المشكّل لم يُعرب: حركة المعجم
+            if fixed_tail or not tail:                                                       # المعجم كتب حركة آخر الكلمة (أمر، ضمير متصل: تُعْطِيكَ) أو المشكّل لم يُعرب: حركة المعجم
                 return word[:stem_start] + fixed
             return word[:stem_start] + fixed_body + tail
     return word
