@@ -202,6 +202,7 @@ LMSTUDIO_VENDOR = pathlib.Path.home() / ".lmstudio" / "extensions" / "backends" 
 logging.basicConfig(filename=HERE / "dictate.log", level=logging.INFO, encoding="utf-8", format="%(asctime)s %(levelname)s %(message)s")
 logging.getLogger("faster_whisper").setLevel(logging.WARNING)
 TERMS_FILE, PLACE_FILE, CHAT_LOG = HERE / "terms.txt", HERE / "place.json", HERE / "chat.log"
+SAY_FILE = HERE / "say.txt"                   # نص يوضع في هذا الملف يُنطق فورًا ثم يُحذف الملف؛ للاختبار والأتمتة
 LEXICON_FILE = HERE / "tashkeel.txt"          # معجم تصحيح التشكيل: «كلمة كلمةٌ مشكّلة» في كل سطر؛ يصحح ما يخطئ فيه المشكّل الآلي (جَمَل/جُمَل)
 PIPER_VOICE, VOICE_FILE = HERE / "models" / "piper" / "ar_JO-kareem-medium.onnx", HERE / "voice.txt"   # الصوت: «silma» أو «kareem» أو «naayf»
 SILMA_DIR = HERE.parent / "SilmaTTS"          # خادم SILMA TTS على كرت الشاشة في بيئته الخاصة (torch)؛ كريم بديل تلقائي
@@ -1866,6 +1867,16 @@ class Panel:
                 self.app.tell(event, 8)
         if self.app.due():
             self.app.ask()
+        if self.ticks % 25 == 0 and SAY_FILE.exists():                                   # نطق نص من ملف say.txt (كل ثانية)
+            try:
+                text = SAY_FILE.read_text(encoding="utf-8").strip()
+                SAY_FILE.unlink()
+            except OSError:
+                text = ""
+            if text:
+                logging.info("نطق من say.txt: %d حرفًا", len(text))
+                self.app.tell("أنطق نصًا من say.txt")
+                self.app.speaker.say(text)
         if self.app.recorder.idle or (self.app.want_stop and self.app.recorder.active):
             self.app.tell("توقفت بأمرك" if self.app.want_stop else "أوقفت الاستماع بعد صمت طويل")
             self.app.want_stop = False
