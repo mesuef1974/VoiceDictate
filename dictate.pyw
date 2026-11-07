@@ -349,12 +349,20 @@ PAUSE_END = re.compile(r"([\u0621-\u064A]+)([\u064B-\u0652]+)(?=\s*(?:[.!؟?:؛;
 HARAKAT = re.compile(r"[\u064B-\u0652\u0670]")
 ALEFS = re.compile("[\u0623\u0625\u0622]")                   # \u0627\u0644\u0645\u0634\u0643\u0651\u0644 \u064A\u0628\u062F\u0651\u0644 \u0647\u0645\u0632\u0627\u062A \u0627\u0644\u0623\u0644\u0641 (\u0627\u0636\u063A\u0637\u2192\u0623\u064E\u0636\u0652\u063A\u064E\u0637\u0652)\u061B \u0627\u0644\u0645\u0642\u0627\u0631\u0646\u0629 \u0628\u0623\u0644\u0641 \u0645\u0648\u062D\u0651\u062F\u0629
 PREFIXES = ("وال", "فال", "بال", "كال", "ولل", "ال", "لل", "و", "ف", "ب", "ل", "ك")
-_lexicon = {}
+_lexicon, _lexicon_mtime = {}, [0.0]
+
+
+def lexicon_mtime():
+    try:
+        return LEXICON_FILE.stat().st_mtime
+    except OSError:
+        return 0.0
 
 
 def load_lexicon():
-    """يقرأ tashkeel.txt مرة ويعيد قاموس «بلا تشكيل → مشكّل»؛ السطور الفارغة و# تعليقات."""
+    """يقرأ tashkeel.txt ويعيد قاموس «بلا تشكيل → مشكّل»؛ السطور الفارغة و# تعليقات. يُعاد تلقائيًا حين يتغيّر الملف على القرص."""
     _lexicon.clear()
+    _lexicon_mtime[0] = lexicon_mtime()
     try:
         for line in LEXICON_FILE.read_text(encoding="utf-8").splitlines():
             parts = line.strip().split()
@@ -392,6 +400,8 @@ def correct_word(word):
 
 
 def correct(text):
+    if lexicon_mtime() != _lexicon_mtime[0]:                                              # المعجم عُدّل على القرص: أعد قراءته بلا أمر صوتي ولا إعادة تشغيل
+        logging.info("معجم التصحيح تغيّر على القرص: %d كلمة", len(load_lexicon()))
     if not _lexicon:
         return text
     return re.sub(r"[\u0621-\u064A\u064B-\u0652\u0670]+", lambda m: correct_word(m.group()), text)
