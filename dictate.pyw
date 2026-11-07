@@ -5,6 +5,7 @@
 «اتبع بايونيك» يراقب قاعدة جلسات Bionic وينطق ردوده وخطواته وأخطاءه، و«وافق»/«ارفض»/«أوقف بايونيك» تُرسل إلى نافذته. «محادثة» ينقل إلى وضع الحوار: كلامك يذهب إلى Qwen في LM Studio ويُنطق رده جملةً جملة ويُكتب مع سؤالك في النافذة النشطة، والحوار يُحفظ في chat.log؛ «إملاء» يعيد الكتابة. مصطلحاتك في terms.txt. التشغيل: start.cmd. الاختبار: python dictate.pyw --file ملف.wav
 """
 import atexit
+import gc
 import ctypes
 import json
 import logging
@@ -222,6 +223,7 @@ PIPER_VOICE, VOICE_FILE = HERE / "models" / "piper" / "ar_JO-kareem-medium.onnx"
 SILMA_DIR = HERE.parent / "SilmaTTS"          # خادم SILMA TTS على كرت الشاشة في بيئته الخاصة (torch)؛ كريم بديل تلقائي
 SILMA_PYTHON, SILMA_SERVER, SILMA_PID = SILMA_DIR / ".venv" / "Scripts" / "python.exe", SILMA_DIR / "server.py", SILMA_DIR / "server.pid"
 SILMA_START_TIMEOUT, SILMA_TIMEOUT = 180, 25   # ثوانٍ: للتحميل والإحماء، ولكل جملة
+UNLOAD_IDLE = 600           # ثوانٍ بلا استعمال يُفرَّغ بعدها خادم سلمى ونموذج الإملاء من الذاكرة (0 يعطّله)؛ يعودان عند أول استعمال
 VOICE_NAMES = {"kareem": "كريم", "naayf": "نايف", "silma": "سلمى"}
 
 user32 = ctypes.WinDLL("user32", use_last_error=True)
@@ -603,6 +605,7 @@ class Speaker:
         self.now_text, self.cumulative = "", []                      # الجملة الجارية وتقدّم طاقتها (0-1) لإضاءة الكلمات
         self.piper, self.piper_failed, self.vocalizer = None, False, None
         self.silma, self.silma_lines, self.silma_state = None, queue.Queue(), ""      # "" لم يبدأ، "starting"، "ready"، "failed"
+        self.silma_lock, self.silma_used = threading.Lock(), time.time()           # القفل يمنع التفريغ أثناء رد جارٍ
         atexit.register(self.stop_silma)
         saved = (VOICE_FILE.read_text(encoding="utf-8").split() + ["kareem", str(SPEED_DEFAULT)])[:2] if VOICE_FILE.exists() else ["kareem", str(SPEED_DEFAULT)]
         self.choice, self.speed = saved[0], min(SPEED_MAX, max(SPEED_MIN, float(saved[1])))
@@ -634,12 +637,14 @@ class Speaker:
             self.silma_state = "failed"
             return
         self.kill_stale_silma()
+        while not self.silma_lines.empty():
+            self.silma_lines.get_nowait()
         try:
             self.silma = subprocess.Popen([str(SILMA_PYTHON), "-X", "utf8", str(SILMA_SERVER)], cwd=str(SILMA_DIR),
                                           stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8",
                                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             SILMA_PID.write_text(str(self.silma.pid), encoding="utf-8")
-            threading.Thread(target=self.read_silma, daemon=True).start()
+            threading.Thread(target=self.read_silma, args=(self.silma,), daemon=True).start()
             line = self.silma_lines.get(timeout=SILMA_START_TIMEOUT)
         except (OSError, queue.Empty) as e:
             logging.warning("تعذر تشغيل خادم سلمى: %s", e)
@@ -647,6 +652,7 @@ class Speaker:
             self.silma_state = "failed"
             return
         self.silma_state = "ready" if line.startswith("ready") else "failed"
+        self.silma_used = time.time()
         logging.info("خادم سلمى: %s", line)
 
     def await_silma(self, generation):
@@ -657,11 +663,25 @@ class Speaker:
         while self.silma_state in ("", "starting") and generation == self.generation and time.time() - began < SILMA_START_TIMEOUT:
             time.sleep(0.2)
 
-    def read_silma(self):
-        proc = self.silma
+    def read_silma(self, proc):
+        """قارئ خاص بعملية واحدة؛ خادم فُرِّغ أو استُبدل لا يضع سطوره في طابور الخادم الجديد."""
         for line in proc.stdout:
-            self.silma_lines.put(line.strip())
-        self.silma_lines.put("err exited")
+            if proc is self.silma:
+                self.silma_lines.put(line.strip())
+        if proc is self.silma:
+            self.silma_lines.put("err exited")
+
+    def unload_idle_silma(self):
+        """يغلق خادم سلمى الجاهز إن لم يُستعمل منذ UNLOAD_IDLE ثانية ولا رد جارٍ؛ await_silma تعيد تشغيله عند أول نطق."""
+        if not self.silma_lock.acquire(blocking=False):
+            return
+        try:
+            if self.silma_state == "ready" and not self.speaking and self.queue.empty() and time.time() - self.silma_used > UNLOAD_IDLE:
+                self.stop_silma()
+                SILMA_PID.unlink(missing_ok=True)      # لئلا يقتل kill_stale_silma لاحقًا عملية أخرى أخذت رقمه
+                logging.info("خادم سلمى فُرِّغ بعد %d دقيقة خمول", UNLOAD_IDLE // 60)
+        finally:
+            self.silma_lock.release()
 
     def kill_stale_silma(self):
         """خادم يتيم من تشغيل سابق يحجز 3 GB من كرت الشاشة؛ يُقتل عبر ملف pid."""
@@ -817,6 +837,7 @@ class Speaker:
     def work(self):
         while True:
             generation, text = self.queue.get()
+            self.silma_lock.acquire()
             try:
                 if self.choice == "silma":
                     self.await_silma(generation)                                   # لا كريم إلى حين الجاهزية؛ ننتظرها
@@ -841,6 +862,8 @@ class Speaker:
             except (OSError, ValueError):
                 logging.exception("فشل النطق")
             finally:
+                self.silma_used = time.time()
+                self.silma_lock.release()
                 if generation == self.generation and self.queue.empty():
                     self.speaking = False
 
@@ -1141,7 +1164,10 @@ class App:
         self.note, self.note_until = "", 0.0
         self.prompt, self.last_text, self.last_len, self.want_stop = None, "", 0, False
         self.fresh_before, self.context, self.last_text_before = True, "", ""
+        self.loading, self.used, self.model_lock = True, time.time(), threading.Lock()   # القفل يمنع تفريغ النموذج أثناء تفريغ صوت
         threading.Thread(target=self.work, daemon=True).start()
+        if UNLOAD_IDLE:
+            threading.Thread(target=self.unload_idle, daemon=True).start()
 
     def tell(self, text, seconds=6):
         self.note, self.note_until = text, time.time() + seconds
@@ -1160,21 +1186,47 @@ class App:
             return "أكتب النص...", WORK
         if time.time() < self.note_until:
             return self.note, IDLE
-        if self.model is None:
+        if self.model is None and self.loading:
             return "يحمّل النموذج...", WORK
         return "جاهز، اضغط وتكلّم", IDLE
 
-    def warm(self):
+    def warm(self, reload=False):
+        """تحميل نموذج الإملاء: عند البدء بصفّارة الجاهزية، وبعد التفريغ بصمت لأن المالك يتكلم حينها."""
+        self.loading = True
+        began = time.time()
         try:
             self.prompt = load_prompt()
             self.model = load_model()
-            logging.info("النموذج جاهز: %s على %s", MODEL, "كرت الشاشة" if self.model.device == "cuda" else "المعالج")
-            winsound.Beep(1000, 90)
-            winsound.Beep(1300, 90)
+            self.used = time.time()
+            logging.info("النموذج جاهز: %s على %s%s", MODEL, "كرت الشاشة" if self.model.device == "cuda" else "المعالج",
+                         " (أُعيد تحميله بعد الخمول في %.1f ث)" % (time.time() - began) if reload else "")
+            if not reload:
+                winsound.Beep(1000, 90)
+                winsound.Beep(1300, 90)
         except Exception:
             logging.exception("تعذر تحميل النموذج")
             self.tell("تعذر تحميل النموذج", 3600)
             winsound.MessageBeep(winsound.MB_ICONHAND)
+        finally:
+            self.loading = False
+
+    def unload_idle(self):
+        """كل 30 ثانية: يفرّغ نموذج الإملاء وخادم سلمى إن لم يُستعملا منذ UNLOAD_IDLE ثانية، فتنخفض ذاكرة الجهاز الملتزمة."""
+        while True:
+            time.sleep(30)
+            try:
+                self.speaker.unload_idle_silma()
+                if (self.model is not None and not self.loading and not self.recorder.active and not self.thinking
+                        and self.jobs.empty() and time.time() - self.used > UNLOAD_IDLE and self.model_lock.acquire(blocking=False)):
+                    try:
+                        if not self.working and self.jobs.empty():
+                            self.model = None
+                            gc.collect()
+                            logging.info("نموذج الإملاء فُرِّغ بعد %d دقيقة خمول", UNLOAD_IDLE // 60)
+                    finally:
+                        self.model_lock.release()
+            except Exception:
+                logging.exception("تعذر التفريغ عند الخمول")
 
     def toggle(self):
         if self.speaker.speaking:
@@ -1187,9 +1239,12 @@ class App:
             except Exception:
                 logging.exception("تعذر إغلاق الميكروفون")
                 self.tell("تعذر إغلاق الميكروفون")
-        elif self.model is None:
-            winsound.MessageBeep(winsound.MB_ICONHAND)
         else:
+            self.used = time.time()
+            if self.model is None and not self.loading:
+                threading.Thread(target=self.warm, args=(True,), daemon=True).start()      # فُرِّغ عند الخمول: يُحمَّل والمالك يتكلم، والتفريغ ينتظره
+            if self.mode == "chat" and self.speaker.choice == "silma" and self.speaker.silma_state == "":
+                threading.Thread(target=self.speaker.start_silma, daemon=True).start()     # إحماء سلمى مع بدء الكلام لا بعد السؤال
             try:
                 self.recorder.start()
                 self.fresh, self.want_stop, self.context = True, False, ""
@@ -1349,8 +1404,15 @@ class App:
             audio = self.jobs.get()
             self.working = True
             try:
-                self.finish(audio)
+                while self.model is None and self.loading:
+                    time.sleep(0.1)
+                if self.model is None:
+                    logging.warning("لا نموذج إملاء؛ أُهمل مقطع صوتي")
+                    continue
+                with self.model_lock:
+                    self.finish(audio)
             finally:
+                self.used = time.time()
                 self.working = False
 
     def transcribe(self, audio):
