@@ -1,0 +1,15 @@
+# بيئات ونماذج (كبيرة وتُنزَّل محليًا)
+.venv/
+models/
+__pycache__/
+*.pyc
+
+# سجلات وحالة شخصية
+*.log
+place.json
+voice.txt
+terms.txt
+
+# مؤقتات
+*.wav
+*.tmp
