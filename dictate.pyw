@@ -387,11 +387,47 @@ def correct(text):
 
 
 SHADDA_AFTER = re.compile("([\u064B-\u0650])\u0651")
+PUNCT_DROP = re.compile(r"[\"'«»“”‘’()\[\]{}<>*#_~`|\\/^+=@$%&•·]")                     # علامات لا تُنطق ولا تفيد الوقف
+PUNCT_PAUSE = re.compile(r"[;؛:]")                                                           # تُقرأ وقفة قصيرة
+PUNCT_END = re.compile(r"[!¡]+")                                                              # نهاية جملة
+PUNCT_DASH = re.compile(r"\s*[-–—]+\s*")
+PUNCT_DOTS = re.compile(r"(?:\.\s*){2,}|…+")
+PUNCT_REPEAT = re.compile(r"([.،؟])(?:\s*[.،؟!])+")
+PAUSAL_ALL = False                                                                            # True: تسكين أواخر كل الكلمات (يخفي أخطاء الإعراب)
+
+
+def spoken_punct(text):
+    """ترقيم صالح للنطق: نماذج النطق تتأثر بالعلامات الغريبة (نجوم، أقواس، شرطات، نقاط متتابعة) فتتلعثم أو تصمت؛
+    تُبقى فقط النقطة والفاصلة وعلامة الاستفهام العربيتان، وتُحوَّل البقية إليها أو تُحذف."""
+    text = PUNCT_DROP.sub(" ", text)
+    text = PUNCT_DOTS.sub(". ", text)
+    text = PUNCT_END.sub(".", text)
+    text = PUNCT_PAUSE.sub("،", text)
+    text = PUNCT_DASH.sub("، ", text)
+    text = text.replace(",", "،").replace("?", "؟")
+    text = PUNCT_REPEAT.sub(r"\1", text)
+    text = re.sub(r"\s+([.،؟])", r"\1", text)
+    text = re.sub(r"^[\s.،؟]+", "", text)
+    return re.sub(r"[ \t]{2,}", " ", text).strip()
 
 
 def shadda_first(text):
     """الشدة قبل حركتها: مشكّل rawi يكتب الحركة ثم الشدة (ترتيب يونيكود القانوني)، ونماذج النطق دُرّبت على الشدة ثم الحركة."""
     return SHADDA_AFTER.sub("\u0651\\1", text)
+
+
+WORD_END = re.compile(r"([\u0621-\u064A]+)([\u064B-\u0652]+)(?=\s|$|[.!؟?:؛;،,])")
+
+
+def pausal_all(text):
+    """تسكين آخر كل كلمة (كما يقرأ كثيرون بلا إعراب): يخفي أخطاء المشكّل في الإعراب على حساب فصاحة الوصل؛ تنوين الفتح يبقى ألفًا والشدة تبقى."""
+    def fix(m):
+        word, marks = m.group(1), m.group(2)
+        keep = "\u0651" if "\u0651" in marks else ""
+        if "\u064B" in marks and not word.endswith("ة"):
+            return word + keep + "\u064B"
+        return word + keep
+    return WORD_END.sub(fix, text)
 
 
 def pausal(text):
@@ -421,8 +457,11 @@ def speech_text(text, vocalizer):
             return ("" if before in " و(" else " ") + spoken + ("" if after in " .،,؛:!؟?)%" else " ")
 
         text = DIGITS.sub(words, text.replace("%", " بالمئة "))
-        text = re.sub(r"[ \t]{2,}", " ", text).strip()
-        return shadda_first(pausal(correct(vocalizer.diacritize(text)))) if vocalizer else text
+        text = spoken_punct(text)
+        if not vocalizer:
+            return text
+        spoken = correct(vocalizer.diacritize(text))
+        return shadda_first(pausal_all(spoken) if PAUSAL_ALL else pausal(spoken))
     except Exception:
         logging.exception("تجهيز نص النطق")
         return text
