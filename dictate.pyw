@@ -1397,7 +1397,8 @@ class Wave:
     تُرسم بـ Pillow بدقة مضاعفة ثم تُصغَّر (تنعيم الحواف) في طبقتين: بعيدة مموّهة وقريبة حادة."""
 
     SS = 2                                                          # معامل الدقة المضاعفة
-    COUNT = 81                                                      # عدد الجسيمات (المالك: 90 ثم أقل بـ10%)
+    COUNT = 8                                                       # عدد الجسيمات (المالك 7/11: 5-10 بدل 81، شكل احترافي)
+    R_SCALE = 2.4                                                   # معامل حجم الجسيم (أكبر حين يقلّ العدد)
 
     def __init__(self, k, width=WAVE_W, height=WAVE_H):
         import random
@@ -1410,9 +1411,15 @@ class Wave:
         rnd = random.Random(7)
         # لكل جسيم: موضع x (أفقي -1..1)، y (رأسي غاوسي)، z (عمق -1..1)، نصف قطر، طور، لون، وسرعة دوران خاصة
         self.dots = []
-        for _ in range(self.COUNT):
-            x, y, z = rnd.uniform(-1, 1), max(-1.0, min(1.0, rnd.gauss(0, 0.45))), rnd.uniform(-1, 1)
-            self.dots.append((x, y, z, rnd.choice((0.6, 0.8, 1.0, 1.4, 1.9, 2.6)), rnd.uniform(0, 2 * math.pi), rnd.random(), rnd.uniform(0.6, 1.4)))
+        if self.COUNT <= 12:                                           # عدد قليل (المالك 7/11: 5-10 جسيمات): توزيع منتظم مقصود لا عشوائي
+            for i in range(self.COUNT):
+                a = 2 * math.pi * i / self.COUNT
+                y = (0.0, 0.5, -0.4, 0.25, -0.6, 0.6)[i % 6] * 0.9
+                self.dots.append((math.cos(a) * 0.95, y, math.sin(a) * 0.95, (1.6, 2.4, 1.2, 2.0)[i % 4], a, i / self.COUNT, 1.0 + 0.15 * (i % 3)))
+        else:
+            for _ in range(self.COUNT):
+                x, y, z = rnd.uniform(-1, 1), max(-1.0, min(1.0, rnd.gauss(0, 0.45))), rnd.uniform(-1, 1)
+                self.dots.append((x, y, z, rnd.choice((0.6, 0.8, 1.0, 1.4, 1.9, 2.6)), rnd.uniform(0, 2 * math.pi), rnd.random(), rnd.uniform(0.6, 1.4)))
 
     def render(self, amps, color, level, phase):
         """amps[0]: الانتشار المُنعَّم (0-1)، color: لون الحالة، level: 0-1 لشدة التوهّج، phase: زمن الحركة."""
@@ -1444,21 +1451,23 @@ class Wave:
             f = 1 / (1.55 - 0.55 * z)                                                   # منظور: z=+1 أمام (أكبر)، z=-1 خلف (أصغر)
             depth = (z + 1) / 2                                                         # 0 بعيد، 1 قريب
             sx, sy = cx + x * half_w * f, mid + y * half_h * f
-            r = r0 * k * f * ((0.8 + 0.6 * amp) if level else 0.55)
+            r = r0 * self.R_SCALE * k * f * ((0.8 + 0.6 * amp) if level else 0.55)
             projected.append((depth, sx, sy, r, hue, abs(y0)))
         projected.sort()
         far = self.Image.new("RGBA", (w, h), (0, 0, 0, 0))
         near = self.Image.new("RGBA", (w, h), (0, 0, 0, 0))
         d_far, d_near = self.ImageDraw.Draw(far), self.ImageDraw.Draw(near)
+        few = self.COUNT <= 12                                                           # جسيمات قليلة: كلها مرئية، والعمق بالحجم والسطوع لا بالاختفاء
+        fog_lo, a_lo, a_span = (0.85, 190, 65) if few else (0.35, 70, 185)
         for depth, sx, sy, r, hue, dist in projected:
             if level:
                 col = mix(far_c, near_c, depth * (0.7 + 0.3 * hue))
-                col = mix(dark, col, 0.35 + 0.65 * depth)                               # ضباب العمق: البعيد يذوب في الخلفية
-                alpha = int(70 + 185 * depth)
+                col = mix(dark, col, fog_lo + (1 - fog_lo) * depth)                       # ضباب العمق: البعيد يذوب في الخلفية
+                alpha = int(a_lo + a_span * depth)
             else:
-                col, alpha = mix(dark, idle_c, 0.4 + 0.6 * depth), int(60 + 90 * depth)
+                col, alpha = mix(dark, idle_c, (0.75 if few else 0.4) + 0.25 * depth), int((150 if few else 60) + 90 * depth)
             (d_near if depth > 0.5 else d_far).ellipse((sx - r, sy - r, sx + r, sy + r), fill=col + (alpha,))
-        img.alpha_composite(far.filter(self.ImageFilter.GaussianBlur(radius=1.8 * k)))           # البعيد ضبابي
+        img.alpha_composite(far.filter(self.ImageFilter.GaussianBlur(radius=(0.9 if few else 1.8) * k)))   # البعيد ضبابي
         img.alpha_composite(near)                                                                  # القريب حاد بلا هالة
         self.photo = self.ImageTk.PhotoImage(img.resize((self.width, self.height), self.Image.LANCZOS))
         return self.photo
