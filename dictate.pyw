@@ -93,7 +93,17 @@ COMMANDS = (
 FUZZY_MAX_WORDS, FUZZY_MIN_LEN = 3, 4
 CHAT_URL, CHAT_MODEL, CHAT_TURNS, CHAT_GAP, CHAT_TIMEOUT = "http://127.0.0.1:1234/v1/chat/completions", "qwen/qwen3-8b", 12, 1.3, 120
 CHAT_SYSTEM = ("اسمك سلمى، مساعدة صوتية محلية تحاور المالك بالعربية الفصحى؛ إن سُئلت عن اسمك فأنت سلمى. أجيبي بجمل قصيرة واضحة تُنطق بصوت، من جملة إلى أربع، "
-               "بلا عناوين ولا قوائم ولا رموز ولا نجوم، وبأرقام غربية 0-9. إن كان السؤال عصفًا ذهنيًا فاطرح فكرة واحدة ثم سؤالًا يدفع التفكير.")
+               "نثرًا متصلًا في فقرة واحدة كما يتكلم الناس. ممنوع منعًا باتًا: القوائم، والنقاط، والترقيم (1، 2، -، •)، والعناوين، والرموز، والنجوم، "
+               "والأسطر المنفصلة؛ اربطي الأفكار بحروف العطف. الأرقام غربية 0-9. إن كان السؤال عصفًا ذهنيًا فاطرحي فكرة واحدة ثم سؤالًا يدفع التفكير.")
+LIST_MARK = re.compile(r"(?m)^[ \t]*(?:[-•*–—●▪►]+|\(?\d{1,2}[.)\-:]?|[أ-ي][.)]|#+)[ \t]+")  # علامات القوائم والترقيم والعناوين في أول السطر (ورقم عارٍ كما يفعل Qwen)
+MARK_ONLY = re.compile(r"[\s\d.)(\-•*–—●▪►:#]*")
+LINE_BREAKS = re.compile(r"[ \t]*\n+[ \t]*")
+
+
+def prose(text):
+    """رد نثري: يحذف علامات القوائم والترقيم من أوائل الأسطر ويصل الأسطر بمسافة (المالك 7/11: الترقيم مزعج، سرد بلا نقاط)،
+    ويجرّد تشكيل النموذج (Qwen يشكّل أحيانًا تشكيلًا خاطئًا مثل «بَارَكاتِهِ» فيتجاوز المشكّلَ الأدقَّ لو تُرك)."""
+    return HARAKAT.sub("", LINE_BREAKS.sub(" ", LIST_MARK.sub("", text)))
 THINK = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
 CHAT_WRITE, ME_LABEL, BOT_LABEL = True, "أنا: ", "سلمى: "
 COMMANDS += (
@@ -1286,22 +1296,25 @@ class App:
                     pending = THINK.sub("", pending + delta)
                     if "<think>" in pending and "</think>" not in pending:
                         continue
-                    parts = SENTENCE_SPLIT.split(pending)
+                    if pending.rstrip(" \t").endswith("\n"):
+                        continue                                     # سطر جديد في الآخر: ننتظر ما بعده كي تُحذف علامة القائمة التالية كاملة
+                    parts = SENTENCE_SPLIT.split(prose(pending))
                     for sentence in parts[:-1]:
-                        if sentence.strip():
+                        if sentence.strip() and not MARK_ONLY.fullmatch(sentence):
                             self.speaker.add(sentence.strip())
                             self.write(sentence.strip() + " ")
                             spoken = True
                             if self.thinking:
                                 self.thinking, self.last_text = False, sentence.strip()
                     pending = parts[-1]
-            if pending.strip():
+            pending = prose(pending)
+            if pending.strip() and not MARK_ONLY.fullmatch(pending):
                 self.speaker.add(pending.strip())
                 self.write(pending.strip())
                 spoken = True
             self.write("", newline=True)
             self.write("", newline=True)
-            reply = THINK.sub("", reply).strip()
+            reply = prose(THINK.sub("", reply)).strip()
             self.history += [{"role": "user", "content": question}, {"role": "assistant", "content": reply}]
             self.last_text = reply
             with CHAT_LOG.open("a", encoding="utf-8") as log:
