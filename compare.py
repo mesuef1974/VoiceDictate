@@ -8,6 +8,7 @@ import pathlib
 import re
 import sys
 import time
+import types
 
 HERE = pathlib.Path(__file__).resolve().parent
 ARABIC = HERE / "models" / "turbo-arabic"
@@ -47,7 +48,8 @@ def record(seconds_max=15):
     import sounddevice
     input("اضغط Enter ثم اقرأ الجملة، واضغط Enter عند الانتهاء... ")
     chunks = []
-    stream = sounddevice.InputStream(samplerate=d.RATE, channels=1, dtype="float32", callback=lambda data, *_: chunks.append(data.copy()))
+    device = d.Recorder.pick_device(types.SimpleNamespace(), sounddevice)      # الميكروفون نفسه الذي تستعمله الأداة (لا سماعة البلوتوث)
+    stream = sounddevice.InputStream(samplerate=d.RATE, channels=1, dtype="float32", device=device, callback=lambda data, *_: chunks.append(data.copy()))
     stream.start()
     input()
     stream.stop()

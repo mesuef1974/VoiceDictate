@@ -1,6 +1,6 @@
 @echo off
 chcp 65001 > nul
-taskkill /f /fi "WINDOWTITLE eq إملاء" > nul 2>&1
-for /f "tokens=2 delims=," %%p in ('wmic process where "name='pythonw.exe' and commandline like '%%dictate.pyw%%'" get processid^,name /format:csv 2^>nul ^| findstr /r "[0-9]"') do taskkill /f /pid %%p > nul 2>&1
+rem wmic حُذف من ويندوز 11، فالإيقاف عبر PowerShell: الأداة وخادم سلمى فقط، لتتسع ذاكرة كرت الشاشة
+powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'python*' -and $_.CommandLine -match 'VoiceDictate.+dictate\.pyw|SilmaTTS.+server\.py' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
 "%~dp0.venv\Scripts\python.exe" -X utf8 "%~dp0compare.py"
 start "" "%~dp0start.cmd"
